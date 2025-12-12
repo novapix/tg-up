@@ -120,7 +120,8 @@ func uploadFile(client *telegram.Client, db *sql.DB, filePath, chatID string) {
 		return
 	}
 	fmt.Println("Uploading:", filePath)
-	_, err := client.SendMedia(chatID, filePath, &telegram.MediaOptions{Caption: ""})
+	filename := filepath.Base(filePath)
+	_, err := client.SendMedia(chatID, filePath, &telegram.MediaOptions{Caption: filename})
 	if err != nil {
 		log.Printf("Failed upload %s: %v", filePath, err)
 		return
@@ -190,7 +191,10 @@ func main() {
 		log.Fatalf("Bot login failed: %v", err)
 	}
 
-	_, _ = client.SendMessage(filepath.Base(targetPath), chatID, nil)
+	_, err = client.SendMessage(chatID, filepath.Base(targetPath), nil)
+	if err != nil {
+		log.Printf("Failed to send folder name: %v", err)
+	}
 
 	info, err := os.Stat(targetPath)
 	if err != nil {
@@ -201,6 +205,7 @@ func main() {
 	} else {
 		uploadFile(client, db, targetPath, chatID)
 	}
+	_, _ = client.SendMessage(chatID, "✅ All done", nil)
 
 	fmt.Println("✅ All done")
 }
