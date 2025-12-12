@@ -12,8 +12,8 @@ import (
 	"github.com/amarnathcjd/gogram/telegram"
 	"github.com/facette/natsort"
 	"github.com/manifoldco/promptui"
-	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/yaml.v2"
+	_ "modernc.org/sqlite"
 )
 
 type Config struct {
@@ -75,19 +75,24 @@ func promptChatID(db *sql.DB) string {
 	return history[idx]
 }
 
-// Natural sort
 func sortedEntries(folder string) []os.DirEntry {
 	entries, _ := os.ReadDir(folder)
 	names := make([]string, len(entries))
 	entryMap := make(map[string]os.DirEntry)
 	for i, e := range entries {
+		// Skip hidden files and folders
+		if e.Name()[0] == '.' {
+			continue
+		}
 		names[i] = e.Name()
 		entryMap[e.Name()] = e
 	}
 	natsort.Sort(names)
-	sorted := make([]os.DirEntry, len(names))
-	for i, n := range names {
-		sorted[i] = entryMap[n]
+	sorted := make([]os.DirEntry, 0, len(names))
+	for _, n := range names {
+		if e, ok := entryMap[n]; ok {
+			sorted = append(sorted, e)
+		}
 	}
 	return sorted
 }
@@ -120,7 +125,7 @@ func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 	entries := sortedEntries(folder)
 	sleep := 2 * time.Second
 
-	// handle files
+	// handle files first
 	for _, e := range entries {
 		full := filepath.Join(folder, e.Name())
 		if !e.IsDir() {
@@ -129,7 +134,7 @@ func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 		}
 	}
 
-	// Subfolders
+	// handle subfolders
 	for _, e := range entries {
 		full := filepath.Join(folder, e.Name())
 		info, err := e.Info()
@@ -145,22 +150,16 @@ func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 func main() {
 	cfgPath := flag.String("config", "", "Path to config YAML")
 	flag.Parse()
-
-	if *cfgPath == "" {
-		log.Fatal("You must specify --config path-to-config.yml")
-	}
-
 	args := flag.Args()
-	if len(args) < 1 {
-		log.Fatal("Specify the folder or file to upload")
+	if *cfgPath == "" || len(args) < 1 {
+		log.Fatal("Usage: tg-up --config /path/to/config.yml /path/to/data")
 	}
 	targetPath := args[0]
 
 	cfg := loadConfig(*cfgPath)
 
-	// SQLite DB in same folder as config
 	dbPath := filepath.Join(filepath.Dir(*cfgPath), "tg-upload.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatalf("Failed to open db: %v", err)
 	}
@@ -180,10 +179,8 @@ func main() {
 		log.Fatalf("Bot login failed: %v", err)
 	}
 
-	// Send folder/file name first
 	_, _ = client.SendMessage(filepath.Base(targetPath), chatID, nil)
 
-	// Upload
 	info, err := os.Stat(targetPath)
 	if err != nil {
 		log.Fatalf("Failed to stat path: %v", err)
