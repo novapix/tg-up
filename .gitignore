@@ -1,0 +1,10 @@
+*.txt
+*.dat
+*.log
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+
+tg-up
+tg-upload
