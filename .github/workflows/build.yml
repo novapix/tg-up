@@ -56,7 +56,7 @@ jobs:
           # 2. Skip compression if the target is macOS (darwin)
           if [ "${{ matrix.goos }}" != "darwin" ]; then
             echo "Target is ${{ matrix.goos }}. Running compression."
-            ./upx.sh
+            ./upx.sh ${{ matrix.goos }} 
           else
             echo "Target is macOS (darwin). Skipping compression step."
           fi
