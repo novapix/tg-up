@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"tg-up/version"
 	"time"
 
 	"github.com/amarnathcjd/gogram/telegram"
@@ -20,6 +21,11 @@ type Config struct {
 	APIID    int    `yaml:"api_id"`
 	APIHash  string `yaml:"api_hash"`
 	BotToken string `yaml:"bot_token"`
+}
+
+func printVersion() {
+	fmt.Printf("tg-up version: %s\n", version.Version)
+	fmt.Printf("Build: %s\n", version.BuildDate)
 }
 
 func loadConfig(path string) Config {
@@ -148,6 +154,10 @@ func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		printVersion()
+		return
+	}
 	cfgPath := flag.String("config", "", "Path to config YAML")
 	flag.Parse()
 	args := flag.Args()
