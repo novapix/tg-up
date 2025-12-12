@@ -1,0 +1,51 @@
+name: Build tg-up
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags
+    branches:
+      - main
+    paths:
+      - 'go.mod'
+      - 'main.go'
+      - 'build.sh'
+      - 'go.sum'
+      - 'VERSION.txt'
+    
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64, 386]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+
+      - name: Install git (needed for commit hash)
+        run: sudo apt-get update && sudo apt-get install -y git upx-ucl
+
+      - name: Make build.sh executable
+        run: chmod +x build.sh
+
+      - name: Build tg-up
+        run: ./build.sh
+      - name: Compress using upx
+        run: |
+          chmod +x ./upx.sh
+          ./upx.sh
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: tg-up-binaries
+          path: dist/
