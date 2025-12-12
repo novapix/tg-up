@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"tg-up/version"
 	"time"
 
@@ -84,23 +86,32 @@ func promptChatID(db *sql.DB) string {
 
 func sortedEntries(folder string) []os.DirEntry {
 	entries, _ := os.ReadDir(folder)
-	names := make([]string, len(entries))
+
+	names := []string{}
 	entryMap := make(map[string]os.DirEntry)
-	for i, e := range entries {
-		// Skip hidden files and folders
-		if e.Name()[0] == '.' {
+
+	for _, e := range entries {
+		// Skip hidden files
+		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		names[i] = e.Name()
+
+		names = append(names, e.Name())
 		entryMap[e.Name()] = e
 	}
-	natsort.Sort(names)
+
+	// Natural sort
+	// natsort.Sort(names)
+	sort.Slice(names, func(i, j int) bool {
+		// Compare lowercased versions of the filenames
+		return natsort.Compare(strings.ToLower(names[i]), strings.ToLower(names[j]))
+	})
+
 	sorted := make([]os.DirEntry, 0, len(names))
 	for _, n := range names {
-		if e, ok := entryMap[n]; ok {
-			sorted = append(sorted, e)
-		}
+		sorted = append(sorted, entryMap[n])
 	}
+
 	return sorted
 }
 
@@ -132,6 +143,7 @@ func uploadFile(client *telegram.Client, db *sql.DB, filePath, chatID string) {
 func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 	entries := sortedEntries(folder)
 	sleep := 2 * time.Second
+	_, _ = client.SendMessage(chatID, "📁 "+filepath.Base(folder), nil)
 
 	// handle files first
 	for _, e := range entries {
