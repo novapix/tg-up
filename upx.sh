@@ -3,10 +3,11 @@ set -e
 
 DIST_DIR=dist
 
-# Check if UPX is installed
+# Check if UPX is installed and accessible
 if ! command -v upx &> /dev/null; then
-    echo "UPX not found! Install it first."
-    exit 1
+    echo "ERROR: UPX not found!"
+    echo "Please ensure 'upx-ucl' or 'upx' is installed and available in your system's PATH."
+    exit 1 
 fi
 
 echo "Compressing binaries in $DIST_DIR using fast compression..."
@@ -18,4 +19,4 @@ for bin in "$DIST_DIR"/*; do
     fi
 done
 
-echo "✅ All binaries compressed with fast mode."
+echo "All binaries compressed with fast mode."

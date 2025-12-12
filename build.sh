@@ -1,46 +1,45 @@
 #!/bin/bash
 set -euo pipefail
 
-# Read version from VERSION.txt (single line)
-if [ ! -f VERSION.txt ]; then
-  echo "VERSION.txt file not found. Create VERSION.txt (e.g. '0.1.0')."
-  exit 1
+if [ "$#" -ne 3 ]; then
+    echo "Usage: ./build.sh <GOOS> <GOARCH> <VERSION>"
+    exit 1
 fi
-VERSION="$(tr -d ' \t\n\r' < VERSION.txt)"
+
+GOOS="$1"
+GOARCH="$2"
+VERSION="$3"
 
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 COMMIT_HASH="$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 
 OUTPUT_DIR=dist
+rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-build() {
-    local GOOS="$1"
-    local GOARCH="$2"
-    local OUT_NAME="$3"
 
-    echo "-> Building for $GOOS/$GOARCH -> $OUT_NAME"
-
-    CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
-      -ldflags="-s -w \
--X tg-up/version.Version=${VERSION} \
--X tg-up/version.BuildDate=${BUILD_DATE} \
--X tg-up/version.CommitHash=${COMMIT_HASH}" \
-      -o "$OUTPUT_DIR/$OUT_NAME" \
-      main.go
+get_out_name() {
+    local os="$1"
+    local arch="$2"
+    local name="tg-up-v${VERSION}-${os}-${arch}"
+    if [ "$os" == "windows" ]; then
+        echo "$name.exe"
+    else
+        echo "$name"
+    fi
 }
 
-# Linux
-build linux amd64 "tg-up-v${VERSION}-linux-amd64"
-build linux arm64 "tg-up-v${VERSION}-linux-arm64"
+OUT_NAME=$(get_out_name "$GOOS" "$GOARCH")
 
-# macOS
-build darwin amd64 "tg-up-v${VERSION}-darwin-amd64"
-build darwin arm64 "tg-up-v${VERSION}-darwin-arm64"
+echo "-> Building for $GOOS/$GOARCH (v$VERSION) -> $OUT_NAME"
 
-# Windows
-build windows amd64 "tg-up-v${VERSION}-windows-amd64.exe"
-build windows 386  "tg-up-v${VERSION}-windows-386.exe"
+CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+  -ldflags="-s -w \
+-X 'tg-up/version.Version=${VERSION}' \
+-X 'tg-up/version.BuildDate=${BUILD_DATE}' \
+-X 'tg-up/version.CommitHash=${COMMIT_HASH}'" \
+  -o "$OUTPUT_DIR/$OUT_NAME" \
+  main.go
 
-echo "== All builds complete -> $OUTPUT_DIR/ =="
+echo "== Build complete for $GOOS/$GOARCH =="
 ls -lh "$OUTPUT_DIR"
