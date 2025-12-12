@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux, windows, darwin]
+        goos: [linux, windows]
         goarch: [amd64, arm64]
         exclude:
           - goos: windows # Exclude windows/arm64
