@@ -26,6 +26,7 @@ type Config struct {
 func printVersion() {
 	fmt.Printf("tg-up version: %s\n", version.Version)
 	fmt.Printf("Build: %s\n", version.BuildDate)
+	fmt.Printf("Commit: %s\n", version.CommitHash)
 }
 
 func loadConfig(path string) Config {
