@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"tg-up/version"
+
 	"time"
 
 	"github.com/amarnathcjd/gogram/telegram"
@@ -18,6 +20,15 @@ import (
 	"gopkg.in/yaml.v2"
 	_ "modernc.org/sqlite"
 )
+
+type VideoInfo struct {
+	Title    string
+	Filename string
+	Duration float32
+	Width    int
+	Height   int
+	Rotation int
+}
 
 type Config struct {
 	APIID    int    `yaml:"api_id"`
@@ -52,36 +63,78 @@ func promptInput(label string) string {
 	return res
 }
 
+// to do implement thumbnail generation later using ffmpeg
+
+func GetTempThumbnailPath(suffix string) (string, error) {
+	if suffix == "" {
+		suffix = ".png"
+	}
+
+	f, err := os.CreateTemp("", "thumb-*"+suffix)
+	if err != nil {
+		return "", err
+	}
+
+	path := f.Name()
+	f.Close()
+	return path, nil
+}
+
 func promptChatID(db *sql.DB) string {
-	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS chat_history(chat_id TEXT PRIMARY KEY)`)
-	rows, err := db.Query("SELECT chat_id FROM chat_history")
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS chat_history(chat_id TEXT PRIMARY KEY, chat_name TEXT)`)
+
+	rows, err := db.Query("SELECT chat_id, chat_name FROM chat_history")
 	if err != nil {
 		log.Fatalf("Failed to query chat_history: %v", err)
 	}
 	defer rows.Close()
 
-	history := []string{}
+	type entry struct {
+		ID   string
+		Name string
+	}
+
+	historyEntries := []entry{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
 			continue
 		}
-		history = append(history, id)
+		historyEntries = append(historyEntries, entry{ID: id, Name: name})
 	}
-	history = append(history, "Enter new chat ID")
 
-	sel := promptui.Select{Label: "Select chat ID", Items: history}
+	historyEntries = append(historyEntries, entry{ID: "new", Name: "Enter new chat ID"})
+
+	// Build prompt items: "Chat Name (ID)" or just ID if no name
+	items := []string{}
+	for _, e := range historyEntries {
+		if e.ID == "new" {
+			items = append(items, e.Name)
+		} else if e.Name != "" {
+			items = append(items, e.Name+" ("+e.ID+")")
+		} else {
+			items = append(items, e.ID)
+		}
+	}
+
+	sel := promptui.Select{Label: "Select chat", Items: items}
 	idx, _, err := sel.Run()
 	if err != nil {
 		log.Fatalf("Prompt failed: %v", err)
 	}
 
-	if history[idx] == "Enter new chat ID" {
+	selected := historyEntries[idx]
+	if selected.ID == "new" {
 		newID := promptInput("Enter channel/group ID (numeric or username)")
-		_, _ = db.Exec("INSERT OR IGNORE INTO chat_history(chat_id) VALUES(?)", newID)
+		chatName := promptInput("Enter chat name (optional, for history)")
+
+		log.Printf("Stored chat name for history: %s", chatName)
+		_, _ = db.Exec("INSERT OR IGNORE INTO chat_history(chat_id, chat_name) VALUES(?, ?)", newID, chatName)
+
 		return newID
 	}
-	return history[idx]
+
+	return selected.ID
 }
 
 func sortedEntries(folder string) []os.DirEntry {
@@ -125,32 +178,42 @@ func markUploaded(db *sql.DB, path string) {
 	_, _ = db.Exec("INSERT OR IGNORE INTO uploaded(path) VALUES(?)", path)
 }
 
-func uploadFile(client *telegram.Client, db *sql.DB, filePath, chatID string) {
+func uploadFile(client *telegram.Client, db *sql.DB, filePath, chatID string, replyToMessageID int32) {
 	if alreadyUploaded(db, filePath) {
 		fmt.Println("Skipping already uploaded:", filePath)
 		return
 	}
 	fmt.Println("Uploading:", filePath)
 	filename := filepath.Base(filePath)
-	_, err := client.SendMedia(chatID, filePath, &telegram.MediaOptions{Caption: filename})
-	if err != nil {
-		log.Printf("Failed upload %s: %v", filePath, err)
+	if replyToMessageID != 0 {
+		_, err := client.SendMedia(chatID, filePath, &telegram.MediaOptions{Caption: filename, ReplyID: replyToMessageID})
+		if err != nil {
+			log.Printf("Failed upload %s: %v", filePath, err)
+			return
+		}
 		return
+	} else {
+		_, err := client.SendMedia(chatID, filePath, &telegram.MediaOptions{Caption: filename})
+		if err != nil {
+			log.Printf("Failed upload %s: %v", filePath, err)
+			return
+		}
 	}
 	markUploaded(db, filePath)
 }
 
-func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
+func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string, replyToMessageID int32) {
 	entries := sortedEntries(folder)
 	sleep := 2 * time.Second
-	_, _ = client.SendMessage(chatID, "📁 "+filepath.Base(folder), nil)
+	folderMsg, _ := client.SendMessage(chatID, "📁 "+filepath.Base(folder), &telegram.SendOptions{ReplyID: replyToMessageID})
 
 	// handle files first
 	for _, e := range entries {
 		full := filepath.Join(folder, e.Name())
 		if !e.IsDir() {
 			time.Sleep(sleep)
-			uploadFile(client, db, full, chatID)
+
+			uploadFile(client, db, full, chatID, folderMsg.ID)
 		}
 	}
 
@@ -163,7 +226,7 @@ func uploadFolder(client *telegram.Client, db *sql.DB, folder, chatID string) {
 		}
 		fmt.Println("Entering folder:", full)
 		time.Sleep(sleep)
-		uploadFolder(client, db, full, chatID)
+		uploadFolder(client, db, full, chatID, folderMsg.ID)
 	}
 }
 
@@ -181,17 +244,6 @@ func main() {
 	targetPath := args[0]
 
 	cfg := loadConfig(*cfgPath)
-
-	dbPath := filepath.Join(filepath.Dir(*cfgPath), "tg-upload.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		log.Fatalf("Failed to open db: %v", err)
-	}
-	defer db.Close()
-	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS uploaded(path TEXT PRIMARY KEY)`)
-
-	chatID := promptChatID(db)
-
 	clientCfg := telegram.NewClientConfigBuilder(int32(cfg.APIID), cfg.APIHash).
 		WithLogLevel(telegram.WarnLevel).Build()
 	client, err := telegram.NewClient(clientCfg)
@@ -202,20 +254,36 @@ func main() {
 	if err := client.LoginBot(cfg.BotToken); err != nil {
 		log.Fatalf("Bot login failed: %v", err)
 	}
-
-	_, err = client.SendMessage(chatID, filepath.Base(targetPath), nil)
+	botInfo, _ := client.GetMe()
+	botName := botInfo.Username
+	fmt.Printf("Logged in as bot: @%s\n", botName)
+	dbPath := filepath.Join(filepath.Dir(*cfgPath), "tg-upload.db")
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		log.Printf("Failed to send folder name: %v", err)
+		log.Fatalf("Failed to open db: %v", err)
 	}
+	defer db.Close()
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS uploaded(path TEXT PRIMARY KEY,chat_id TEXT)`)
 
+	chatID := promptChatID(db)
+	// can't figure out how to use topics with gogram yet, so skipping that for now, even though topic id was passed in param
+	// still sends to main chat
+	// so using replyid as workaround
+
+	replyId, err := strconv.Atoi(promptInput("Reply to message ID (0 for none)"))
+	if err != nil {
+		log.Fatalf("Invalid message ID: %v", err)
+		replyId = 0
+	}
+	replyToMessageID := int32(replyId)
 	info, err := os.Stat(targetPath)
 	if err != nil {
 		log.Fatalf("Failed to stat path: %v", err)
 	}
 	if info.IsDir() {
-		uploadFolder(client, db, targetPath, chatID)
+		uploadFolder(client, db, targetPath, chatID, replyToMessageID)
 	} else {
-		uploadFile(client, db, targetPath, chatID)
+		uploadFile(client, db, targetPath, chatID, replyToMessageID)
 	}
 	_, _ = client.SendMessage(chatID, "✅ All done", nil)
 
